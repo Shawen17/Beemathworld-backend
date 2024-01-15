@@ -82,10 +82,10 @@ WSGI_APPLICATION = 'backend.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.mysql',
-        'NAME': os.environ.get('NAME'),
+        'NAME': config('NAME'),
         'USER': 'shawen',
-        'PASSWORD': os.environ.get('PASSWORD'),
-        'HOST': os.environ.get('HOST'),
+        'PASSWORD': config('PASSWORD'),
+        'HOST': config('HOST'),
     }
 }
 
@@ -189,12 +189,12 @@ EMAIL_USE_SSL= True
 # DEFAULT_FROM_EMAIL = os.environ.get("EMAIL_HOST_USER")
 DEFAULT_FROM_EMAIL='support@beemathworld.ng'
 EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
-EMAIL_HOST = os.environ.get('EMAIL_HOST')
+EMAIL_HOST = config('EMAIL_HOST')
 EMAIL_PORT = 465
 # EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER")
 EMAIL_HOST_USER='support@beemathworld.ng'
 # EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD")
-EMAIL_HOST_PASSWORD=os.environ.get('EMAIL_HOST_PASSWORD')
+EMAIL_HOST_PASSWORD=config('EMAIL_HOST_PASSWORD')
 
 AUTH_USER_MODEL='givers.User'
 
