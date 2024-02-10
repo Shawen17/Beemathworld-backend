@@ -9,6 +9,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from rest_framework import status
+from django.db import transaction
 
 
 User=get_user_model()
@@ -35,11 +36,15 @@ def remove_from_cart(request):
         item=ShoppingCart.objects.get(id=data['product_id'],shopper=data['email'],status='in-cart')
         prod=item.product
         refill=item.quantity
-        product=ProductVariation.objects.get(id=prod.id)
-        product.quantity=refill+product.quantity
-        product.save(update_fields=['quantity'])
-        item.delete()
-        return Response(status=status.HTTP_201_CREATED)
+        try:
+            with transaction.atomic():
+                product=ProductVariation.objects.select_for_update().get(id=prod.id)
+                product.quantity+=refill
+                product.save(update_fields=['quantity'])
+                item.delete()
+                return Response(status=status.HTTP_201_CREATED)
+        except Exception:
+            return Response({"status": "failed", "message": "Something went wrong."})
 
 
 @api_view(['PUT'])
@@ -57,47 +62,54 @@ def get_destination(request):
 def update_cart_items(request):
     data=request.data
     if request.method == "PUT":
-        product=ProductVariation.objects.get(id=data['product_id'])
-        cart_data={
-            "shopper":data['email'],
-            "product":product,
-            "quantity": int(data['quantity']),
-            "cost": int(data['quantity'])*product.price
-        }
+        try:
+            with transaction.atomic():
+                product=ProductVariation.objects.select_for_update().get(id=data['product_id'])
+                cart_data={
+                    "shopper":data['email'],
+                    "product":product,
+                    "quantity": int(data['quantity']),
+                    "cost": int(data['quantity'])*product.price
+                }
 
-        if product.in_stock and product.product.is_active:
-            if int(data['quantity']) > product.quantity:
-                return Response(status=status.HTTP_400_BAD_REQUEST)
-            ShoppingCart.objects.create(**cart_data)
-            stock_balance=product.quantity - int(data['quantity'])
-            product.quantity = stock_balance
-            product.save(update_fields=['quantity'])
-            return Response(status=status.HTTP_201_CREATED)
+                if product.in_stock and product.product.is_active:
+                    if int(data['quantity']) > product.quantity:
+                        return Response(status=status.HTTP_400_BAD_REQUEST)
+                    ShoppingCart.objects.create(**cart_data)
+                    product.quantity -= int(data['quantity'])
+                    product.save(update_fields=['quantity'])
+                    return Response(status=status.HTTP_201_CREATED)
+        except Exception:
+            return Response({"status": "failed", "message": "Something went wrong."})
+
 
 @api_view(['PUT'])
 def update_multi_cart_items(request):
     data=request.data
     if request.method == "PUT":
         product_quantity_pair= zip(data['product_id'],data['quantity'])
+        try:
+            with transaction.atomic():
 
-        for i,qty in product_quantity_pair:
-            product=ProductVariation.objects.get(id=i)
+                for i,qty in product_quantity_pair:
+                    product=ProductVariation.objects.select_for_update().get(id=i)
 
-            cart_data={
-                "shopper":data['email'],
-                "product":product,
-                "quantity": qty,
-                "cost": qty*product.price
-            }
+                    cart_data={
+                        "shopper":data['email'],
+                        "product":product,
+                        "quantity": qty,
+                        "cost": qty*product.price
+                    }
 
-            if product.in_stock and product.product.is_active:
-                if qty > product.quantity:
-                    return Response(status=status.HTTP_400_BAD_REQUEST)
-                ShoppingCart.objects.create(**cart_data)
-                stock_balance=product.quantity - qty
-                product.quantity = stock_balance
-                product.save(update_fields=['quantity'])
-        return Response(status=status.HTTP_201_CREATED)
+                    if product.in_stock and product.product.is_active:
+                        if qty > product.quantity:
+                            return Response(status=status.HTTP_400_BAD_REQUEST)
+                        ShoppingCart.objects.create(**cart_data)
+                        product.quantity -= qty
+                        product.save(update_fields=['quantity'])
+                return Response(status=status.HTTP_201_CREATED)
+        except Exception:
+            return Response({"status": "failed", "message": "Something went wrong."})
 
 
 @api_view(['PUT'])
@@ -116,24 +128,28 @@ def initiate_payment(request):
     from .utility import remove
     data=request.data
     order_serializer=OrderSerializer(data=data)
-    if order_serializer.is_valid():
-        order_serializer.save()
-        items=data['item'].split(',')
-        products=remove(items)
+    try:
+        with transaction.atomic():
+            if order_serializer.is_valid():
+                order_serializer.save()
+                items=data['item'].split(',')
+                products=remove(items)
 
-        product_ids= []
-        for prod,var in products:
-            if var=='':
-                var=None
-            product_ids.append(ProductVariation.objects.get(product__description=prod,variant=var).id)
+                product_ids= []
+                for prod,var in products:
+                    if var=='':
+                        var=None
+                    product_ids.append(ProductVariation.objects.get(product__description=prod,variant=var).id)
 
-        ordered=ShoppingCart.objects.filter(shopper=data['ordered_by'],product__in=product_ids,status='in-cart')
-        for j in ordered:
-            store=Store.objects.get(variant=j.product.id)
-            store.unit_sold+=j.quantity
-            store.save(update_fields=['unit_sold'])
-        ordered.update(status='ordered')
-        return Response(status=status.HTTP_201_CREATED)
+                ordered=ShoppingCart.objects.filter(shopper=data['ordered_by'],product__in=product_ids,status='in-cart')
+                for j in ordered:
+                    store=Store.objects.select_for_update().get(variant=j.product.id)
+                    store.unit_sold+=j.quantity
+                    store.save(update_fields=['unit_sold'])
+                ordered.update(status='ordered')
+                return Response(status=status.HTTP_201_CREATED)
+    except Exception:
+        return Response({"status": "failed", "message": "Something went wrong."})
 
 
 @api_view(['PUT'])
